@@ -77,12 +77,19 @@ class StateOp {
     }
 }
 
+// helper: check if gaussian's label is visible
+const labelVisible = (splat: Splat, i: number) => {
+    if (!splat.hiddenLabels.size) return true;
+    const labelData = splat.splatData.getProp('label') as Uint8Array;
+    return !splat.hiddenLabels.has(labelData ? labelData[i] : 0);
+};
+
 class SelectAllOp extends StateOp {
     name = 'selectAll';
 
     constructor(splat: Splat) {
         const state = splat.splatData.getProp('state') as Uint8Array;
-        super(splat, IndexRanges.fromPredicate(splat.splatData.numSplats, i => state[i] === 0), State.selected, BitOp.SET);
+        super(splat, IndexRanges.fromPredicate(splat.splatData.numSplats, i => state[i] === 0 && labelVisible(splat, i)), State.selected, BitOp.SET);
     }
 }
 
@@ -100,7 +107,7 @@ class SelectInvertOp extends StateOp {
 
     constructor(splat: Splat) {
         const state = splat.splatData.getProp('state') as Uint8Array;
-        super(splat, IndexRanges.fromPredicate(splat.splatData.numSplats, i => (state[i] & (State.locked | State.deleted)) === 0), State.selected, BitOp.TOGGLE);
+        super(splat, IndexRanges.fromPredicate(splat.splatData.numSplats, i => (state[i] & (State.locked | State.deleted)) === 0 && labelVisible(splat, i)), State.selected, BitOp.TOGGLE);
     }
 }
 
@@ -116,9 +123,9 @@ class SelectOp extends StateOp {
         const pred = filter instanceof Uint32Array ? sortedPredicate(filter) : filter;
 
         const preds = {
-            add: (i: number) => pred(i) && state[i] === 0,
+            add: (i: number) => labelVisible(splat, i) && pred(i) && state[i] === 0,
             remove: (i: number) => pred(i) && state[i] === State.selected,
-            set: (i: number) => (state[i] === State.selected) !== pred(i)
+            set: (i: number) => (labelVisible(splat, i) ? (state[i] === State.selected) !== pred(i) : false)
         };
 
         super(splat, IndexRanges.fromPredicate(splatData.numSplats, preds[op]), State.selected, bitOp);
@@ -379,6 +386,56 @@ class MultiOp {
     }
 }
 
+class AssignLabelOp {
+    name = 'assignLabel';
+    splat: Splat;
+    indices: IndexRanges;
+    newLabelId: number;
+    oldLabels: Uint8Array;
+
+    constructor(splat: Splat, labelId: number) {
+        const state = splat.splatData.getProp('state') as Uint8Array;
+        const labelData = splat.splatData.getProp('label') as Uint8Array;
+
+        this.indices = IndexRanges.fromPredicate(
+            splat.splatData.numSplats,
+            i => state[i] === State.selected
+        );
+
+        this.splat = splat;
+        this.newLabelId = labelId;
+
+        const oldLabels: number[] = [];
+        this.indices.forEach((i) => {
+            oldLabels.push(labelData[i]);
+        });
+        this.oldLabels = new Uint8Array(oldLabels);
+    }
+
+    do() {
+        const labelData = this.splat.splatData.getProp('label') as Uint8Array;
+        this.indices.forEach((i) => {
+            labelData[i] = this.newLabelId;
+        });
+        this.splat.updateLabels();
+    }
+
+    undo() {
+        const labelData = this.splat.splatData.getProp('label') as Uint8Array;
+        let idx = 0;
+        this.indices.forEach((i) => {
+            labelData[i] = this.oldLabels[idx++];
+        });
+        this.splat.updateLabels();
+    }
+
+    destroy() {
+        this.splat = null;
+        this.indices = null;
+        this.oldLabels = null;
+    }
+}
+
 class AddSplatOp {
     name: 'addSplat';
     scene: Scene;
@@ -441,5 +498,6 @@ export {
     AnimTrackEditOp,
     MultiOp,
     AddSplatOp,
-    SplatRenameOp
+    SplatRenameOp,
+    AssignLabelOp
 };

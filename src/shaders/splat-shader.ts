@@ -2,6 +2,10 @@ const vertexShader = /* glsl*/`
 #include "gsplatCommonVS"
 
 uniform sampler2D splatState;
+uniform sampler2D splatLabel;
+uniform sampler2D labelPalette;
+uniform int showLabels;
+uniform int showLabelColors;
 
 uniform vec4 selectedClr;
 uniform vec4 lockedClr;
@@ -11,6 +15,7 @@ uniform vec4 clrScale;
 
 varying mediump vec4 texCoord_flags;            // xy: texCoord, z: selected, w: locked
 varying mediump vec4 color;
+varying mediump vec4 labelClr;
 
 #if PICK_PASS
     uniform uint pickOp;                        // 0: add, 1: remove, 2: set
@@ -62,6 +67,16 @@ void main(void) {
         if ((vertexState & 4u) != 0u) {
             gl_Position = discardVec;
             return;
+        }
+
+        // skip hidden labels (palette alpha == 0 means hidden)
+        if (showLabels != 0) {
+            uint vertexLabelVis = uint(texelFetch(splatLabel, splat.uv, 0).r * 255.0 + 0.5);
+            vec4 palEntry = texelFetch(labelPalette, ivec2(int(vertexLabelVis), 0), 0);
+            if (palEntry.a == 0.0) {
+                gl_Position = discardVec;
+                return;
+            }
         }
     #endif
 
@@ -142,6 +157,16 @@ void main(void) {
             // selected
             color.xyz = mix(color.xyz, selectedClr.xyz, selectedClr.a);
         }
+
+        // read label color for fragment shader
+        labelClr = vec4(0.0);
+        if (showLabelColors != 0) {
+            uint vertexLabel = uint(texelFetch(splatLabel, splat.uv, 0).r * 255.0 + 0.5);
+            if (vertexLabel != 0u) {
+                vec4 palClr = texelFetch(labelPalette, ivec2(int(vertexLabel), 0), 0);
+                labelClr = vec4(palClr.rgb, palClr.a > 0.0 ? 0.5 : 0.0);
+            }
+        }
     #endif
 }
 `;
@@ -149,6 +174,7 @@ void main(void) {
 const fragmentShader = /* glsl*/`
 varying mediump vec4 texCoord_flags;
 varying mediump vec4 color;
+varying mediump vec4 labelClr;
 
 uniform bool outlineMode;
 uniform float ringSize;
@@ -198,17 +224,23 @@ void main(void) {
             }
         }
 
+        // apply label color overlay
+        mediump vec3 finalColor = color.xyz;
+        if (labelClr.a > 0.0) {
+            finalColor = mix(finalColor, labelClr.xyz, labelClr.a);
+        }
+
         bool selected = texCoord_flags.z != 0.0 && texCoord_flags.w == 0.0;
 
         if (outlineMode) {
-            pcFragColor0 = vec4(color.xyz * alpha, alpha);
+            pcFragColor0 = vec4(finalColor * alpha, alpha);
             pcFragColor1 = vec4(0.0, 0.0, 0.0, selected ? norm : 0.0);
         } else {
             if (selected) {
-                pcFragColor0 = vec4(color.xyz * alpha * 0.8, alpha);
-                pcFragColor1 = vec4(color.xyz * alpha * 0.2, alpha);
+                pcFragColor0 = vec4(finalColor * alpha * 0.8, alpha);
+                pcFragColor1 = vec4(finalColor * alpha * 0.2, alpha);
             } else {
-                pcFragColor0 = vec4(color.xyz * alpha, alpha);
+                pcFragColor0 = vec4(finalColor * alpha, alpha);
                 pcFragColor1 = vec4(0.0, 0.0, 0.0, 0.0);
             }
         }

@@ -1,0 +1,131 @@
+@use 'colors.scss' as *;
+
+#label-panel {
+    top: 50%;
+    transform: translate(0, -50%);
+    right: 102px;
+    width: 300px;
+    flex-direction: column;
+    max-height: 500px;
+
+    &:not(.pcui-hidden) {
+        display: flex;
+    }
+
+    .label-panel-row {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        padding: 4px 8px;
+        height: 28px;
+
+        .label-panel-row-label {
+            flex-grow: 1;
+        }
+    }
+
+    .label-panel-add-btn {
+        margin: 4px 8px;
+    }
+
+    .label-list-container {
+        max-height: 350px;
+        overflow-y: auto;
+        flex-direction: column;
+
+        &:not(.pcui-hidden) {
+            display: flex;
+        }
+    }
+
+    .label-item {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        padding: 4px 8px;
+
+        &:hover {
+            background-color: $bcg-dark;
+        }
+    }
+
+    .label-color-swatch {
+        width: 16px;
+        height: 16px;
+        min-width: 16px;
+        border-radius: 3px;
+        margin-right: 6px;
+        cursor: pointer;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .label-name {
+        flex-grow: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: default;
+    }
+
+    .label-count {
+        color: $text-secondary;
+        margin: 0 6px;
+        min-width: 30px;
+        text-align: right;
+    }
+
+    .label-eye-btn {
+        cursor: pointer;
+        margin-right: 4px;
+        display: flex;
+        align-items: center;
+
+        svg {
+            width: 14px;
+            height: 14px;
+            color: $text-secondary;
+        }
+
+        &:hover svg {
+            color: $text-primary;
+        }
+    }
+
+    .label-color-none {
+        background-color: $bcg-lighter !important;
+        border-style: dashed !important;
+    }
+
+    .label-action-btn {
+        font-family: pc-icon;
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 2px;
+        color: $text-secondary;
+
+        &:hover {
+            color: #f90;
+        }
+    }
+
+    .label-rename-input {
+        flex-grow: 1;
+        background: $bcg-darker;
+        color: $text-primary;
+        border: 1px solid $clr-hilight;
+        border-radius: 2px;
+        padding: 2px 4px;
+        outline: none;
+    }
+
+    .label-delete-btn:hover {
+        color: #f44 !important;
+    }
+
+    .label-panel-hint {
+        padding: 8px;
+        text-align: center;
+        color: $text-secondary;
+        font-style: italic;
+    }
+}

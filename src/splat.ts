@@ -3,6 +3,7 @@ import {
     FILTER_NEAREST,
     PIXELFORMAT_R8,
     PIXELFORMAT_R16U,
+    PIXELFORMAT_RGBA8,
     Asset,
     BoundingBox,
     Color,
@@ -50,6 +51,8 @@ class Splat extends Element {
     changedCounter = 0;
     stateTexture: Texture;
     transformTexture: Texture;
+    labelTexture: Texture;
+    labelPaletteTexture: Texture;
     selectionBoundStorage: BoundingBox;
     localBoundStorage: BoundingBox;
     worldBoundStorage: BoundingBox;
@@ -67,6 +70,10 @@ class Splat extends Element {
     _blackPoint = 0;
     _whitePoint = 1;
     _transparency = 1;
+
+    labels: Map<number, { name: string, color: Color }> = new Map();
+    hiddenLabels: Set<number> = new Set();
+    private _nextLabelId = 1;
 
     measurePoints: Vec3[] = [];
     measureSelection = -1;
@@ -112,6 +119,16 @@ class Splat extends Element {
             byteSize: 2
         });
 
+        // per-splat label ID (0 = unlabeled, 1-255 = user labels)
+        if (!this.splatData.getProp('label')) {
+            this.splatData.getElement('vertex').properties.push({
+                type: 'uchar',
+                name: 'label',
+                storage: new Uint8Array(this.splatData.numSplats),
+                byteSize: 1
+            });
+        }
+
         const { x: width, y: height } = (splatResource as any).textureDimensions;
 
         // pack spherical harmonic data
@@ -132,6 +149,20 @@ class Splat extends Element {
         // create the state texture
         this.stateTexture = createTexture('splatState', PIXELFORMAT_R8);
         this.transformTexture = createTexture('splatTransform', PIXELFORMAT_R16U);
+        this.labelTexture = createTexture('splatLabel', PIXELFORMAT_R8);
+
+        // create the label palette texture (256 entries, RGBA)
+        this.labelPaletteTexture = new Texture(device, {
+            name: 'labelPalette',
+            width: 256,
+            height: 1,
+            format: PIXELFORMAT_RGBA8,
+            mipmaps: false,
+            minFilter: FILTER_NEAREST,
+            magFilter: FILTER_NEAREST,
+            addressU: ADDRESS_CLAMP_TO_EDGE,
+            addressV: ADDRESS_CLAMP_TO_EDGE
+        });
 
         // create the transform palette
         this.transformPalette = new TransformPalette(device);
@@ -146,6 +177,8 @@ class Splat extends Element {
             material.setDefine('SH_BANDS', `${Math.min(bands, (instance.resource as GSplatResource).shBands)}`);
             material.setParameter('splatState', this.stateTexture);
             material.setParameter('splatTransform', this.transformTexture);
+            material.setParameter('splatLabel', this.labelTexture);
+            material.setParameter('labelPalette', this.labelPaletteTexture);
             material.update();
         };
 
@@ -253,6 +286,125 @@ class Splat extends Element {
         await this.updateLocalBounds();
     }
 
+    updateLabels() {
+        const labelData = this.splatData.getProp('label') as Uint8Array;
+
+        // write label data to gpu texture
+        const data = this.labelTexture.lock();
+        data.set(labelData);
+        this.labelTexture.unlock();
+
+        // update label palette texture
+        // alpha encodes: 0 = hidden, 1 = visible (no overlay), 128 = visible (with overlay color)
+        const paletteData = this.labelPaletteTexture.lock();
+        (paletteData as Uint8Array).fill(0);
+
+        // label 0 (unlabeled): no color overlay, but encode visibility
+        paletteData[0 * 4 + 3] = this.hiddenLabels.has(0) ? 0 : 1;
+
+        this.labels.forEach((label, id) => {
+            paletteData[id * 4 + 0] = Math.round(label.color.r * 255);
+            paletteData[id * 4 + 1] = Math.round(label.color.g * 255);
+            paletteData[id * 4 + 2] = Math.round(label.color.b * 255);
+            paletteData[id * 4 + 3] = this.hiddenLabels.has(id) ? 0 : 128;
+        });
+        this.labelPaletteTexture.unlock();
+
+        this.scene.forceRender = true;
+        this.scene.events.fire('splat.labelsChanged', this);
+    }
+
+    createLabel(name: string, color?: Color): number {
+        const id = this._nextLabelId++;
+        this.labels.set(id, {
+            name,
+            color: color ?? new Color(Math.random() * 0.8 + 0.2, Math.random() * 0.8 + 0.2, Math.random() * 0.8 + 0.2)
+        });
+        this.updateLabels();
+        return id;
+    }
+
+    removeLabel(id: number) {
+        this.labels.delete(id);
+        const labelData = this.splatData.getProp('label') as Uint8Array;
+        for (let i = 0; i < labelData.length; i++) {
+            if (labelData[i] === id) labelData[i] = 0;
+        }
+        this.updateLabels();
+    }
+
+    renameLabel(id: number, name: string) {
+        const label = this.labels.get(id);
+        if (label) {
+            label.name = name;
+            this.scene.events.fire('splat.labelsChanged', this);
+        }
+    }
+
+    toggleLabelVisibility(id: number) {
+        if (this.hiddenLabels.has(id)) {
+            this.hiddenLabels.delete(id);
+        } else {
+            this.hiddenLabels.add(id);
+        }
+        this.updateLabels();
+    }
+
+    isLabelVisible(id: number): boolean {
+        return !this.hiddenLabels.has(id);
+    }
+
+    setLabelColor(id: number, color: Color) {
+        const label = this.labels.get(id);
+        if (label) {
+            label.color.copy(color);
+            this.updateLabels();
+        }
+    }
+
+    // scan label data for IDs that have no metadata entry and create defaults
+    detectLabels() {
+        const labelData = this.splatData.getProp('label') as Uint8Array;
+        const usedIds = new Set<number>();
+        for (let i = 0; i < labelData.length; i++) {
+            if (labelData[i] !== 0) {
+                usedIds.add(labelData[i]);
+            }
+        }
+
+        // default colors for auto-detected labels
+        const defaultColors = [
+            new Color(0.9, 0.2, 0.2), new Color(0.2, 0.7, 0.2),
+            new Color(0.2, 0.4, 0.9), new Color(0.9, 0.7, 0.1),
+            new Color(0.8, 0.3, 0.8), new Color(0.2, 0.8, 0.8),
+            new Color(0.9, 0.5, 0.2), new Color(0.5, 0.9, 0.3)
+        ];
+
+        let colorIdx = 0;
+        let maxId = 0;
+        for (const id of usedIds) {
+            if (id > maxId) maxId = id;
+            if (!this.labels.has(id)) {
+                const color = defaultColors[colorIdx % defaultColors.length].clone();
+                this.labels.set(id, { name: `Label ${id}`, color });
+                colorIdx++;
+            }
+        }
+
+        if (maxId >= this._nextLabelId) {
+            this._nextLabelId = maxId + 1;
+        }
+    }
+
+    getLabelCount(id: number): number {
+        const labelData = this.splatData.getProp('label') as Uint8Array;
+        let count = 0;
+        for (let i = 0; i < labelData.length; i++) {
+            if (labelData[i] === id) count++;
+        }
+        return count;
+    }
+
     get worldTransform() {
         return this.entity.getWorldTransform();
     }
@@ -304,6 +456,10 @@ class Splat extends Element {
 
         // we must update state in case the state data was loaded from ply
         await this.updateState();
+
+        // detect labels loaded from ply and create metadata for them
+        this.detectLabels();
+        this.updateLabels();
     }
 
     remove() {
@@ -361,6 +517,13 @@ class Splat extends Element {
 
         material.setParameter('saturation', this.saturation);
         material.setParameter('transformPalette', this.transformPalette.texture);
+
+        // configure label visualization
+        const hasHiddenLabels = this.hiddenLabels.size > 0;
+        const showLabelColors = events.invoke('view.showLabels');
+        // enable label shader when showing label colors OR when filtering hidden labels
+        material.setParameter('showLabels', (showLabelColors || hasHiddenLabels) ? 1 : 0);
+        material.setParameter('showLabelColors', showLabelColors ? 1 : 0);
 
         if (this.visible && selected) {
             // render bounding box
@@ -553,7 +716,13 @@ class Splat extends Element {
             brightness: this.brightness,
             blackPoint: this.blackPoint,
             whitePoint: this.whitePoint,
-            transparency: this.transparency
+            transparency: this.transparency,
+            labels: Array.from(this.labels.entries()).map(([id, label]) => ({
+                id,
+                name: label.name,
+                color: [label.color.r, label.color.g, label.color.b]
+            })),
+            nextLabelId: this._nextLabelId
         };
     }
 
@@ -570,6 +739,15 @@ class Splat extends Element {
         this.blackPoint = blackPoint;
         this.whitePoint = whitePoint;
         this.transparency = transparency;
+
+        if (doc.labels) {
+            this.labels.clear();
+            for (const l of doc.labels) {
+                this.labels.set(l.id, { name: l.name, color: new Color(l.color[0], l.color[1], l.color[2]) });
+            }
+            this._nextLabelId = doc.nextLabelId ?? (Math.max(0, ...this.labels.keys()) + 1);
+            this.updateLabels();
+        }
     }
 }
 
