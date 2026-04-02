@@ -80,7 +80,7 @@ class StateOp {
 // helper: check if gaussian's label is visible
 const labelVisible = (splat: Splat, i: number) => {
     if (!splat.hiddenLabels.size) return true;
-    const labelData = splat.splatData.getProp('label') as Uint8Array;
+    const labelData = splat.splatData.getProp('label') as Uint32Array;
     return !splat.hiddenLabels.has(labelData ? labelData[i] : 0);
 };
 
@@ -391,11 +391,11 @@ class AssignLabelOp {
     splat: Splat;
     indices: IndexRanges;
     newLabelId: number;
-    oldLabels: Uint8Array;
+    oldLabels: Uint32Array;
 
     constructor(splat: Splat, labelId: number) {
         const state = splat.splatData.getProp('state') as Uint8Array;
-        const labelData = splat.splatData.getProp('label') as Uint8Array;
+        const labelData = splat.splatData.getProp('label') as Uint32Array;
 
         this.indices = IndexRanges.fromPredicate(
             splat.splatData.numSplats,
@@ -409,11 +409,11 @@ class AssignLabelOp {
         this.indices.forEach((i) => {
             oldLabels.push(labelData[i]);
         });
-        this.oldLabels = new Uint8Array(oldLabels);
+        this.oldLabels = new Uint32Array(oldLabels);
     }
 
     do() {
-        const labelData = this.splat.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splat.splatData.getProp('label') as Uint32Array;
         this.indices.forEach((i) => {
             labelData[i] = this.newLabelId;
         });
@@ -421,7 +421,7 @@ class AssignLabelOp {
     }
 
     undo() {
-        const labelData = this.splat.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splat.splatData.getProp('label') as Uint32Array;
         let idx = 0;
         this.indices.forEach((i) => {
             labelData[i] = this.oldLabels[idx++];

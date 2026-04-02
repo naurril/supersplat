@@ -613,12 +613,40 @@ const serializePly = async (splats: Splat[], serializeSettings: SerializeSetting
 
             // write
             for (let j = 0; j < props.length; ++j) {
-                if (props[j].type === 'uchar') {
-                    dataView.setUint8(offset, singleSplat.data[props[j].name]);
-                    offset += 1;
-                } else {
-                    dataView.setFloat32(offset, singleSplat.data[props[j].name], true);
-                    offset += 4;
+                const val = singleSplat.data[props[j].name];
+                switch (props[j].type) {
+                    case 'char':
+                        dataView.setInt8(offset, val);
+                        offset += 1;
+                        break;
+                    case 'uchar':
+                        dataView.setUint8(offset, val);
+                        offset += 1;
+                        break;
+                    case 'short':
+                        dataView.setInt16(offset, val, true);
+                        offset += 2;
+                        break;
+                    case 'ushort':
+                        dataView.setUint16(offset, val, true);
+                        offset += 2;
+                        break;
+                    case 'int':
+                        dataView.setInt32(offset, val, true);
+                        offset += 4;
+                        break;
+                    case 'uint':
+                        dataView.setUint32(offset, val, true);
+                        offset += 4;
+                        break;
+                    case 'double':
+                        dataView.setFloat64(offset, val, true);
+                        offset += 8;
+                        break;
+                    default: // float
+                        dataView.setFloat32(offset, val, true);
+                        offset += 4;
+                        break;
                 }
             }
 

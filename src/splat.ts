@@ -119,14 +119,22 @@ class Splat extends Element {
             byteSize: 2
         });
 
-        // per-splat label ID (0 = unlabeled, 1-255 = user labels)
-        if (!this.splatData.getProp('label')) {
+        // per-splat label ID (0 = unlabeled, 32-bit IDs for user labels)
+        const existingLabel = this.splatData.getProp('label');
+        if (!existingLabel) {
             this.splatData.getElement('vertex').properties.push({
-                type: 'uchar',
+                type: 'uint',
                 name: 'label',
-                storage: new Uint8Array(this.splatData.numSplats),
-                byteSize: 1
+                storage: new Uint32Array(this.splatData.numSplats),
+                byteSize: 4
             });
+        } else if (!(existingLabel instanceof Uint32Array)) {
+            // upgrade legacy 8-bit label data to 32-bit
+            const props = this.splatData.getElement('vertex').properties;
+            const prop = props.find((p: any) => p.name === 'label');
+            prop.storage = Uint32Array.from(existingLabel as Uint8Array);
+            prop.type = 'uint';
+            prop.byteSize = 4;
         }
 
         const { x: width, y: height } = (splatResource as any).textureDimensions;
@@ -287,11 +295,21 @@ class Splat extends Element {
     }
 
     updateLabels() {
-        const labelData = this.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splatData.getProp('label') as Uint32Array;
 
-        // write label data to gpu texture
+        // build compact mapping: 32-bit label ID → 8-bit palette index
+        const idToIndex = new Map<number, number>();
+        idToIndex.set(0, 0); // unlabeled always at palette index 0
+        let nextIndex = 1;
+        this.labels.forEach((_label, id) => {
+            idToIndex.set(id, nextIndex++);
+        });
+
+        // write compact palette indices to gpu texture
         const data = this.labelTexture.lock();
-        data.set(labelData);
+        for (let i = 0; i < labelData.length; i++) {
+            data[i] = idToIndex.get(labelData[i]) ?? 0;
+        }
         this.labelTexture.unlock();
 
         // update label palette texture
@@ -299,14 +317,15 @@ class Splat extends Element {
         const paletteData = this.labelPaletteTexture.lock();
         (paletteData as Uint8Array).fill(0);
 
-        // label 0 (unlabeled): no color overlay, but encode visibility
+        // palette index 0 (unlabeled): no color overlay, but encode visibility
         paletteData[0 * 4 + 3] = this.hiddenLabels.has(0) ? 0 : 1;
 
         this.labels.forEach((label, id) => {
-            paletteData[id * 4 + 0] = Math.round(label.color.r * 255);
-            paletteData[id * 4 + 1] = Math.round(label.color.g * 255);
-            paletteData[id * 4 + 2] = Math.round(label.color.b * 255);
-            paletteData[id * 4 + 3] = this.hiddenLabels.has(id) ? 0 : 128;
+            const idx = idToIndex.get(id);
+            paletteData[idx * 4 + 0] = Math.round(label.color.r * 255);
+            paletteData[idx * 4 + 1] = Math.round(label.color.g * 255);
+            paletteData[idx * 4 + 2] = Math.round(label.color.b * 255);
+            paletteData[idx * 4 + 3] = this.hiddenLabels.has(id) ? 0 : 128;
         });
         this.labelPaletteTexture.unlock();
 
@@ -326,7 +345,7 @@ class Splat extends Element {
 
     removeLabel(id: number) {
         this.labels.delete(id);
-        const labelData = this.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splatData.getProp('label') as Uint32Array;
         for (let i = 0; i < labelData.length; i++) {
             if (labelData[i] === id) labelData[i] = 0;
         }
@@ -364,7 +383,7 @@ class Splat extends Element {
 
     // scan label data for IDs that have no metadata entry and create defaults
     detectLabels() {
-        const labelData = this.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splatData.getProp('label') as Uint32Array;
         const usedIds = new Set<number>();
         for (let i = 0; i < labelData.length; i++) {
             if (labelData[i] !== 0) {
@@ -397,7 +416,7 @@ class Splat extends Element {
     }
 
     getLabelCount(id: number): number {
-        const labelData = this.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splatData.getProp('label') as Uint32Array;
         let count = 0;
         for (let i = 0; i < labelData.length; i++) {
             if (labelData[i] === id) count++;
