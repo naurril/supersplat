@@ -129,12 +129,10 @@ class Splat extends Element {
                 byteSize: 4
             });
         } else if (!(existingLabel instanceof Uint32Array)) {
-            // upgrade legacy 8-bit label data to 32-bit
+            // upgrade legacy 8-bit or 16-bit label data to 32-bit
             const props = this.splatData.getElement('vertex').properties;
-            const prop = props.find((p: any) => p.name === 'label');
-            prop.storage = Uint32Array.from(existingLabel as Uint8Array);
-            prop.type = 'uint';
-            prop.byteSize = 4;
+            const idx = props.findIndex((p: any) => p.name === 'label');
+            props[idx] = { type: 'uint', name: 'label', storage: Uint32Array.from(existingLabel), byteSize: 4 };
         }
 
         const { x: width, y: height } = (splatResource as any).textureDimensions;
@@ -157,12 +155,12 @@ class Splat extends Element {
         // create the state texture
         this.stateTexture = createTexture('splatState', PIXELFORMAT_R8);
         this.transformTexture = createTexture('splatTransform', PIXELFORMAT_R16U);
-        this.labelTexture = createTexture('splatLabel', PIXELFORMAT_R8);
+        this.labelTexture = createTexture('splatLabel', PIXELFORMAT_R16U);
 
-        // create the label palette texture (256 entries, RGBA)
+        // create the label palette texture (512 entries, RGBA)
         this.labelPaletteTexture = new Texture(device, {
             name: 'labelPalette',
-            width: 256,
+            width: 512,
             height: 1,
             format: PIXELFORMAT_RGBA8,
             mipmaps: false,
@@ -297,7 +295,7 @@ class Splat extends Element {
     updateLabels() {
         const labelData = this.splatData.getProp('label') as Uint32Array;
 
-        // build compact mapping: 32-bit label ID → 8-bit palette index
+        // build compact mapping: 32-bit label ID → 16-bit palette index
         const idToIndex = new Map<number, number>();
         idToIndex.set(0, 0); // unlabeled always at palette index 0
         let nextIndex = 1;
@@ -305,8 +303,8 @@ class Splat extends Element {
             idToIndex.set(id, nextIndex++);
         });
 
-        // write compact palette indices to gpu texture
-        const data = this.labelTexture.lock();
+        // write compact palette indices to gpu texture (R16U)
+        const data = this.labelTexture.lock() as Uint16Array;
         for (let i = 0; i < labelData.length; i++) {
             data[i] = idToIndex.get(labelData[i]) ?? 0;
         }
@@ -341,6 +339,15 @@ class Splat extends Element {
         });
         this.updateLabels();
         return id;
+    }
+
+    createLabelWithId(id: number, name: string, color: Color) {
+        if (this.labels.has(id)) return;
+        this.labels.set(id, { name, color: color.clone() });
+        if (id >= this._nextLabelId) {
+            this._nextLabelId = id + 1;
+        }
+        this.updateLabels();
     }
 
     removeLabel(id: number) {
@@ -391,7 +398,20 @@ class Splat extends Element {
             }
         }
 
-        // default colors for auto-detected labels
+        // predefined label names and colors matching VehicleLightState flags
+        const knownLabels: Map<number, { name: string, color: Color }> = new Map([
+            [0x1, { name: 'Position', color: new Color(0.9, 0.9, 0.3) }],
+            [0x2, { name: 'Low Beam', color: new Color(1.0, 1.0, 0.7) }],
+            [0x4, { name: 'High Beam', color: new Color(1.0, 1.0, 1.0) }],
+            [0x8, { name: 'Brake', color: new Color(0.9, 0.1, 0.1) }],
+            [0x10, { name: 'Right Blinker', color: new Color(1.0, 0.6, 0.0) }],
+            [0x20, { name: 'Left Blinker', color: new Color(1.0, 0.5, 0.0) }],
+            [0x40, { name: 'Reverse', color: new Color(0.9, 0.9, 0.9) }],
+            [0x80, { name: 'Fog', color: new Color(0.7, 0.7, 0.2) }],
+            [0x100, { name: 'Special', color: new Color(0.2, 0.4, 0.9) }]
+        ]);
+
+        // fallback colors for unknown label IDs
         const defaultColors = [
             new Color(0.9, 0.2, 0.2), new Color(0.2, 0.7, 0.2),
             new Color(0.2, 0.4, 0.9), new Color(0.9, 0.7, 0.1),
@@ -404,9 +424,14 @@ class Splat extends Element {
         for (const id of usedIds) {
             if (id > maxId) maxId = id;
             if (!this.labels.has(id)) {
-                const color = defaultColors[colorIdx % defaultColors.length].clone();
-                this.labels.set(id, { name: `Label ${id}`, color });
-                colorIdx++;
+                const known = knownLabels.get(id);
+                if (known) {
+                    this.labels.set(id, { name: known.name, color: known.color.clone() });
+                } else {
+                    const color = defaultColors[colorIdx % defaultColors.length].clone();
+                    this.labels.set(id, { name: `Label ${id}`, color });
+                    colorIdx++;
+                }
             }
         }
 
@@ -543,6 +568,7 @@ class Splat extends Element {
         // enable label shader when showing label colors OR when filtering hidden labels
         material.setParameter('showLabels', (showLabelColors || hasHiddenLabels) ? 1 : 0);
         material.setParameter('showLabelColors', showLabelColors ? 1 : 0);
+        material.setParameter('isolateSelected', events.invoke('view.isolateSelected') ? 1 : 0);
 
         if (this.visible && selected) {
             // render bounding box

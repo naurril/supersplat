@@ -2,7 +2,7 @@ import { MemoryFileSystem } from '@playcanvas/splat-transform';
 import { Color, Mat4, path, Texture, Vec3, Vec4 } from 'playcanvas';
 
 import { EditHistory } from './edit-history';
-import { SelectAllOp, SelectNoneOp, SelectInvertOp, SelectOp, HideSelectionOp, UnhideAllOp, DeleteSelectionOp, ResetOp, MultiOp, AddSplatOp, AssignLabelOp } from './edit-ops';
+import { SelectAllOp, SelectNoneOp, SelectInvertOp, SelectOp, HideSelectionOp, UnhideAllOp, DeleteSelectionOp, ResetOp, MultiOp, AddSplatOp, AssignLabelOp, ReplaceLabelOp, RemoveFromLabelOp } from './edit-ops';
 import { Element, ElementType } from './element';
 import { Events } from './events';
 import { MappedReadFileSystem } from './io';
@@ -76,7 +76,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     [
         'camera.mode', 'camera.overlay', 'camera.splatSize', 'view.outlineSelection',
         'view.centersUseGaussianColor', 'view.bands', 'camera.bound', 'camera.showPoses',
-        'selection.changed', 'tool.coordSpace', 'view.showLabels'
+        'selection.changed', 'tool.coordSpace', 'view.showLabels', 'view.isolateSelected'
     ].forEach((eventName) => {
         events.on(eventName, () => {
             scene.forceRender = true;
@@ -736,6 +736,17 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     events.on('view.setShowLabels', (value: boolean) => setShowLabels(value));
     events.on('view.toggleShowLabels', () => setShowLabels(!showLabels));
 
+    // isolate selected: show only selected splats
+    let isolateSelected = false;
+
+    events.function('view.isolateSelected', () => isolateSelected);
+    events.on('view.setIsolateSelected', (value: boolean) => {
+        if (value !== isolateSelected) {
+            isolateSelected = value;
+            events.fire('view.isolateSelected', isolateSelected);
+        }
+    });
+
     // assign label to current selection
     events.on('label.assign', (labelId: number) => {
         selectedSplats().forEach((splat) => {
@@ -743,10 +754,24 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         });
     });
 
+    // replace label: label contains exactly the current selection
+    events.on('label.replace', (labelId: number) => {
+        selectedSplats().forEach((splat) => {
+            events.fire('edit.add', new ReplaceLabelOp(splat, labelId));
+        });
+    });
+
+    // remove selected points from a label
+    events.on('label.removeSelected', (labelId: number) => {
+        selectedSplats().forEach((splat) => {
+            events.fire('edit.add', new RemoveFromLabelOp(splat, labelId));
+        });
+    });
+
     // select gaussians by label
     events.on('label.select', (labelId: number, op: 'add' | 'remove' | 'set') => {
         selectedSplats().forEach((splat) => {
-            const labelData = splat.splatData.getProp('label') as Uint8Array;
+            const labelData = splat.splatData.getProp('label') as Uint16Array;
             const filter = (i: number) => labelData[i] === labelId;
             events.fire('edit.add', new SelectOp(splat, op ?? 'set', filter));
         });

@@ -2,10 +2,11 @@ const vertexShader = /* glsl*/`
 #include "gsplatCommonVS"
 
 uniform sampler2D splatState;
-uniform sampler2D splatLabel;
+uniform highp usampler2D splatLabel;
 uniform sampler2D labelPalette;
 uniform int showLabels;
 uniform int showLabelColors;
+uniform int isolateSelected;
 
 uniform vec4 selectedClr;
 uniform vec4 lockedClr;
@@ -69,9 +70,15 @@ void main(void) {
             return;
         }
 
+        // isolate: show only selected splats
+        if (isolateSelected != 0 && (vertexState & 1u) == 0u) {
+            gl_Position = discardVec;
+            return;
+        }
+
         // skip hidden labels (palette alpha == 0 means hidden)
         if (showLabels != 0) {
-            uint vertexLabelVis = uint(texelFetch(splatLabel, splat.uv, 0).r * 255.0 + 0.5);
+            uint vertexLabelVis = texelFetch(splatLabel, splat.uv, 0).r;
             vec4 palEntry = texelFetch(labelPalette, ivec2(int(vertexLabelVis), 0), 0);
             if (palEntry.a == 0.0) {
                 gl_Position = discardVec;
@@ -161,7 +168,7 @@ void main(void) {
         // read label color for fragment shader
         labelClr = vec4(0.0);
         if (showLabelColors != 0) {
-            uint vertexLabel = uint(texelFetch(splatLabel, splat.uv, 0).r * 255.0 + 0.5);
+            uint vertexLabel = texelFetch(splatLabel, splat.uv, 0).r;
             if (vertexLabel != 0u) {
                 vec4 palClr = texelFetch(labelPalette, ivec2(int(vertexLabel), 0), 0);
                 labelClr = vec4(palClr.rgb, palClr.a > 0.0 ? 0.5 : 0.0);

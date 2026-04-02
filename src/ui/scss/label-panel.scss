@@ -24,9 +24,38 @@
         }
     }
 
-    .label-panel-add-btn {
-        margin: 4px 8px;
+    // action toolbar (assign / select / deselect)
+
+    .label-toolbar {
+        display: flex;
+        flex-direction: row;
+        gap: 4px;
+        padding: 4px 8px;
+
+        &:not(.pcui-hidden) {
+            display: flex;
+        }
     }
+
+    .label-toolbar-btn {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .label-assign-btn {
+        flex: 2;
+
+        &:not(.pcui-disabled) {
+            background-color: $clr-hilight;
+            color: white;
+
+            &:hover {
+                background-color: lighten($clr-hilight, 8%);
+            }
+        }
+    }
+
+    // label list
 
     .label-list-container {
         max-height: 350px;
@@ -43,9 +72,16 @@
         flex-direction: row;
         align-items: center;
         padding: 4px 8px;
+        cursor: pointer;
+        border-left: 3px solid transparent;
 
         &:hover {
             background-color: $bcg-dark;
+        }
+
+        &.label-item-active {
+            border-left-color: $clr-hilight;
+            background-color: rgba($clr-hilight, 0.1);
         }
     }
 
@@ -64,7 +100,8 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        cursor: default;
+        cursor: text;
+        user-select: text;
     }
 
     .label-count {
@@ -72,6 +109,7 @@
         margin: 0 6px;
         min-width: 30px;
         text-align: right;
+        font-size: 11px;
     }
 
     .label-eye-btn {
@@ -108,6 +146,10 @@
         }
     }
 
+    .label-delete-btn:hover {
+        color: #f44 !important;
+    }
+
     .label-rename-input {
         flex-grow: 1;
         background: $bcg-darker;
@@ -116,10 +158,24 @@
         border-radius: 2px;
         padding: 2px 4px;
         outline: none;
+
+        option {
+            background: $bcg-darker;
+            color: $text-primary;
+        }
     }
 
-    .label-delete-btn:hover {
-        color: #f44 !important;
+    // bottom bar
+
+    .label-bottom-bar {
+        display: flex;
+        flex-direction: row;
+        gap: 4px;
+        padding: 4px 8px;
+
+        &:not(.pcui-hidden) {
+            display: flex;
+        }
     }
 
     .label-panel-hint {
