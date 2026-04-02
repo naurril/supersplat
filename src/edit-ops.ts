@@ -80,7 +80,7 @@ class StateOp {
 // helper: check if gaussian's label is visible
 const labelVisible = (splat: Splat, i: number) => {
     if (!splat.hiddenLabels.size) return true;
-    const labelData = splat.splatData.getProp('label') as Uint8Array;
+    const labelData = splat.splatData.getProp('label') as Uint16Array;
     return !splat.hiddenLabels.has(labelData ? labelData[i] : 0);
 };
 
@@ -391,11 +391,11 @@ class AssignLabelOp {
     splat: Splat;
     indices: IndexRanges;
     newLabelId: number;
-    oldLabels: Uint8Array;
+    oldLabels: Uint16Array;
 
     constructor(splat: Splat, labelId: number) {
         const state = splat.splatData.getProp('state') as Uint8Array;
-        const labelData = splat.splatData.getProp('label') as Uint8Array;
+        const labelData = splat.splatData.getProp('label') as Uint16Array;
 
         this.indices = IndexRanges.fromPredicate(
             splat.splatData.numSplats,
@@ -409,11 +409,11 @@ class AssignLabelOp {
         this.indices.forEach((i) => {
             oldLabels.push(labelData[i]);
         });
-        this.oldLabels = new Uint8Array(oldLabels);
+        this.oldLabels = new Uint16Array(oldLabels);
     }
 
     do() {
-        const labelData = this.splat.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splat.splatData.getProp('label') as Uint16Array;
         this.indices.forEach((i) => {
             labelData[i] = this.newLabelId;
         });
@@ -421,7 +421,7 @@ class AssignLabelOp {
     }
 
     undo() {
-        const labelData = this.splat.splatData.getProp('label') as Uint8Array;
+        const labelData = this.splat.splatData.getProp('label') as Uint16Array;
         let idx = 0;
         this.indices.forEach((i) => {
             labelData[i] = this.oldLabels[idx++];
@@ -433,6 +433,101 @@ class AssignLabelOp {
         this.splat = null;
         this.indices = null;
         this.oldLabels = null;
+    }
+}
+
+// Replace: the label contains exactly the current selection.
+// Old label points not in selection → unlabeled; selected points → label.
+class ReplaceLabelOp {
+    name = 'replaceLabel';
+    splat: Splat;
+    labelId: number;
+    // backup of every gaussian whose label changed: [index, oldLabel]
+    changes: { index: number, oldLabel: number }[];
+
+    constructor(splat: Splat, labelId: number) {
+        const state = splat.splatData.getProp('state') as Uint8Array;
+        const labelData = splat.splatData.getProp('label') as Uint16Array;
+        this.splat = splat;
+        this.labelId = labelId;
+        this.changes = [];
+
+        for (let i = 0; i < splat.splatData.numSplats; i++) {
+            const isSelected = state[i] === State.selected;
+            const curLabel = labelData[i];
+
+            if (isSelected && curLabel !== labelId) {
+                // selected but not this label → will become this label
+                this.changes.push({ index: i, oldLabel: curLabel });
+            } else if (!isSelected && curLabel === labelId) {
+                // not selected but has this label → will become unlabeled
+                this.changes.push({ index: i, oldLabel: curLabel });
+            }
+        }
+    }
+
+    do() {
+        const labelData = this.splat.splatData.getProp('label') as Uint16Array;
+        const state = this.splat.splatData.getProp('state') as Uint8Array;
+        for (const c of this.changes) {
+            const isSelected = state[c.index] === State.selected;
+            labelData[c.index] = isSelected ? this.labelId : 0;
+        }
+        this.splat.updateLabels();
+    }
+
+    undo() {
+        const labelData = this.splat.splatData.getProp('label') as Uint16Array;
+        for (const c of this.changes) {
+            labelData[c.index] = c.oldLabel;
+        }
+        this.splat.updateLabels();
+    }
+
+    destroy() {
+        this.splat = null;
+        this.changes = null;
+    }
+}
+
+// Remove selected points from a label (set them to unlabeled).
+// Only affects selected gaussians that currently have the given label.
+class RemoveFromLabelOp {
+    name = 'removeFromLabel';
+    splat: Splat;
+    indices: IndexRanges;
+    labelId: number;
+
+    constructor(splat: Splat, labelId: number) {
+        const state = splat.splatData.getProp('state') as Uint8Array;
+        const labelData = splat.splatData.getProp('label') as Uint16Array;
+        this.splat = splat;
+        this.labelId = labelId;
+        this.indices = IndexRanges.fromPredicate(
+            splat.splatData.numSplats,
+            i => state[i] === State.selected && labelData[i] === labelId
+        );
+    }
+
+    do() {
+        const labelData = this.splat.splatData.getProp('label') as Uint16Array;
+        this.indices.forEach((i) => {
+            labelData[i] = 0;
+        });
+        this.splat.updateLabels();
+    }
+
+    undo() {
+        const labelData = this.splat.splatData.getProp('label') as Uint16Array;
+        this.indices.forEach((i) => {
+            labelData[i] = this.labelId;
+        });
+        this.splat.updateLabels();
+    }
+
+    destroy() {
+        this.splat = null;
+        this.indices = null;
     }
 }
 
@@ -499,5 +594,7 @@ export {
     MultiOp,
     AddSplatOp,
     SplatRenameOp,
-    AssignLabelOp
+    AssignLabelOp,
+    ReplaceLabelOp,
+    RemoveFromLabelOp
 };

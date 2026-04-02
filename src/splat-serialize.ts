@@ -613,11 +613,16 @@ const serializePly = async (splats: Splat[], serializeSettings: SerializeSetting
 
             // write
             for (let j = 0; j < props.length; ++j) {
-                if (props[j].type === 'uchar') {
-                    dataView.setUint8(offset, singleSplat.data[props[j].name]);
+                const type = props[j].type;
+                const val = singleSplat.data[props[j].name];
+                if (type === 'uchar') {
+                    dataView.setUint8(offset, val);
                     offset += 1;
+                } else if (type === 'ushort') {
+                    dataView.setUint16(offset, val, true);
+                    offset += 2;
                 } else {
-                    dataView.setFloat32(offset, singleSplat.data[props[j].name], true);
+                    dataView.setFloat32(offset, val, true);
                     offset += 4;
                 }
             }

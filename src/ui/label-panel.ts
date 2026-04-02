@@ -13,30 +13,25 @@ const createSvg = (svgString: string) => {
     return new DOMParser().parseFromString(decodedStr, 'image/svg+xml').documentElement;
 };
 
-// default label colors
-const defaultColors = [
-    new Color(0.9, 0.2, 0.2),
-    new Color(0.2, 0.7, 0.2),
-    new Color(0.2, 0.4, 0.9),
-    new Color(0.9, 0.7, 0.1),
-    new Color(0.8, 0.3, 0.8),
-    new Color(0.2, 0.8, 0.8),
-    new Color(0.9, 0.5, 0.2),
-    new Color(0.5, 0.9, 0.3)
-];
-
 const toHex = (v: number) => {
     const h = Math.round(v * 255).toString(16);
     return h.length < 2 ? `0${h}` : h;
 };
 
-let colorIndex = 0;
+// predefined vehicle light labels: id, name, color
+const prebuiltLabels: { id: number, name: string, color: Color }[] = [
+    { id: 0x1, name: 'Position', color: new Color(0.9, 0.9, 0.3) },
+    { id: 0x2, name: 'Low Beam', color: new Color(1.0, 1.0, 0.7) },
+    { id: 0x4, name: 'High Beam', color: new Color(1.0, 1.0, 1.0) },
+    { id: 0x8, name: 'Brake', color: new Color(0.9, 0.1, 0.1) },
+    { id: 0x10, name: 'Right Blinker', color: new Color(1.0, 0.6, 0.0) },
+    { id: 0x20, name: 'Left Blinker', color: new Color(1.0, 0.5, 0.0) },
+    { id: 0x40, name: 'Reverse', color: new Color(0.9, 0.9, 0.9) },
+    { id: 0x80, name: 'Fog', color: new Color(0.7, 0.7, 0.2) },
+    { id: 0x100, name: 'Special', color: new Color(0.2, 0.4, 0.9) }
+];
 
-const nextColor = () => {
-    const color = defaultColors[colorIndex % defaultColors.length];
-    colorIndex++;
-    return color.clone();
-};
+const prebuiltLabelNames = prebuiltLabels.map(l => l.name);
 
 class LabelPanel extends Container {
     constructor(events: Events, tooltips: Tooltips, args = {}) {
@@ -92,12 +87,61 @@ class LabelPanel extends Container {
         toggleRow.append(toggleLabel);
         toggleRow.append(showLabelsToggle);
 
-        // add label button
+        // isolate selected toggle
 
-        const addBtn = new Button({
-            text: localize('panel.labels.add-label'),
-            class: 'label-panel-add-btn'
+        const isolateRow = new Container({
+            class: 'label-panel-row'
         });
+
+        const isolateLabel = new Label({
+            text: localize('panel.labels.isolate-selected'),
+            class: 'label-panel-row-label'
+        });
+
+        const isolateToggle = new BooleanInput({
+            type: 'toggle',
+            value: false
+        });
+
+        isolateRow.append(isolateLabel);
+        isolateRow.append(isolateToggle);
+
+        // action toolbar: assign / select / deselect — operates on active label
+
+        const toolbar = new Container({
+            class: 'label-toolbar'
+        });
+
+        const assignBtn = new Button({
+            text: localize('panel.labels.assign'),
+            class: ['label-toolbar-btn', 'label-assign-btn']
+        });
+
+        const replaceBtn = new Button({
+            text: localize('panel.labels.replace'),
+            class: ['label-toolbar-btn', 'label-replace-btn']
+        });
+
+        const removeBtn = new Button({
+            text: localize('panel.labels.remove'),
+            class: ['label-toolbar-btn', 'label-remove-btn']
+        });
+
+        const selectBtn = new Button({
+            text: localize('panel.labels.select'),
+            class: 'label-toolbar-btn'
+        });
+
+        const deselectBtn = new Button({
+            text: localize('panel.labels.deselect'),
+            class: 'label-toolbar-btn'
+        });
+
+        toolbar.append(assignBtn);
+        toolbar.append(replaceBtn);
+        toolbar.append(removeBtn);
+        toolbar.append(selectBtn);
+        toolbar.append(deselectBtn);
 
         // label list container
 
@@ -105,10 +149,31 @@ class LabelPanel extends Container {
             class: 'label-list-container'
         });
 
+        // bottom buttons
+
+        const bottomBar = new Container({
+            class: 'label-bottom-bar'
+        });
+
+        const addAllBtn = new Button({
+            text: localize('panel.labels.add-all-lights'),
+            class: 'label-toolbar-btn'
+        });
+
+        const addBtn = new Button({
+            text: localize('panel.labels.add-label'),
+            class: 'label-toolbar-btn'
+        });
+
+        bottomBar.append(addAllBtn);
+        bottomBar.append(addBtn);
+
         this.append(header);
         this.append(toggleRow);
-        this.append(addBtn);
+        this.append(isolateRow);
+        this.append(toolbar);
         this.append(listContainer);
+        this.append(bottomBar);
 
         // no-selection hint
         const noSelectionHint = new Label({
@@ -120,6 +185,26 @@ class LabelPanel extends Container {
         // state
 
         let selected: Splat = null;
+        let activeLabelId: number = -1;
+
+        const updateToolbarState = () => {
+            assignBtn.enabled = activeLabelId >= 0;
+            replaceBtn.enabled = activeLabelId > 0;
+            removeBtn.enabled = activeLabelId > 0;
+            selectBtn.enabled = activeLabelId >= 0;
+            deselectBtn.enabled = activeLabelId >= 0;
+        };
+
+        const setActiveLabel = (id: number) => {
+            activeLabelId = id;
+            // update highlight on rows
+            const rows = listContainer.dom.querySelectorAll('.label-item');
+            rows.forEach((row: Element) => {
+                const rowId = parseInt(row.getAttribute('data-label-id'), 10);
+                row.classList.toggle('label-item-active', rowId === id);
+            });
+            updateToolbarState();
+        };
 
         const rebuildList = () => {
             listContainer.clear();
@@ -132,18 +217,31 @@ class LabelPanel extends Container {
 
             if (!selected) {
                 noSelectionHint.hidden = false;
+                toolbar.hidden = true;
+                bottomBar.hidden = true;
                 return;
             }
 
             noSelectionHint.hidden = true;
+            toolbar.hidden = false;
+            bottomBar.hidden = false;
+
+            // validate active label still exists
+            if (activeLabelId > 0 && !selected.labels.has(activeLabelId)) {
+                activeLabelId = -1;
+            }
 
             const buildRow = (id: number, name: string, color: Color | null, isUnlabeled: boolean) => {
                 const row = new Container({ class: 'label-item' });
+                row.dom.setAttribute('data-label-id', String(id));
+                if (id === activeLabelId) {
+                    row.dom.classList.add('label-item-active');
+                }
 
-                // click row to select gaussians with this label
+                // click row to set active label
                 row.dom.addEventListener('click', (e: MouseEvent) => {
-                    if ((e.target as HTMLElement).closest('.label-action-btn, .label-color-swatch, .label-eye-btn')) return;
-                    events.fire('label.select', id, 'set');
+                    if ((e.target as HTMLElement).closest('.label-eye-btn, .label-color-swatch, .label-name, .label-delete-btn')) return;
+                    setActiveLabel(id);
                 });
 
                 // eye icon (visibility toggle)
@@ -182,47 +280,51 @@ class LabelPanel extends Container {
 
                     row.dom.appendChild(swatch);
                 } else {
-                    // empty swatch placeholder for unlabeled
                     const placeholder = document.createElement('div');
                     placeholder.className = 'label-color-swatch label-color-none';
                     row.dom.appendChild(placeholder);
                 }
 
-                // name
+                // name (selectable text, double-click to rename via dropdown)
                 const nameLabel = new Label({
                     class: 'label-name',
                     text: name
                 });
 
                 if (!isUnlabeled) {
-                    // double-click to rename
                     nameLabel.dom.addEventListener('dblclick', () => {
-                        const inputEl = document.createElement('input');
-                        inputEl.type = 'text';
-                        inputEl.value = name;
-                        inputEl.className = 'label-rename-input';
+                        const selectEl = document.createElement('select');
+                        selectEl.className = 'label-rename-input';
+
+                        for (const prebuiltName of prebuiltLabelNames) {
+                            const opt = document.createElement('option');
+                            opt.value = prebuiltName;
+                            opt.text = prebuiltName;
+                            if (prebuiltName === name) opt.selected = true;
+                            selectEl.appendChild(opt);
+                        }
+
                         nameLabel.dom.style.display = 'none';
-                        nameLabel.dom.parentElement.insertBefore(inputEl, nameLabel.dom.nextSibling);
-                        inputEl.focus();
-                        inputEl.select();
+                        nameLabel.dom.parentElement.insertBefore(selectEl, nameLabel.dom.nextSibling);
+                        selectEl.focus();
 
                         let done = false;
                         const finish = (save: boolean) => {
                             if (done) return;
                             done = true;
-                            const newName = inputEl.value.trim();
-                            inputEl.remove();
+                            const newName = selectEl.value;
+                            selectEl.remove();
                             nameLabel.dom.style.display = '';
                             if (save && newName && selected) {
                                 selected.renameLabel(id, newName);
                             }
                         };
 
-                        inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
-                            if (e.key === 'Enter') finish(true);
+                        selectEl.addEventListener('change', () => finish(true));
+                        selectEl.addEventListener('keydown', (e: KeyboardEvent) => {
                             if (e.key === 'Escape') finish(false);
                         });
-                        inputEl.addEventListener('blur', () => finish(true));
+                        selectEl.addEventListener('blur', () => finish(true));
                     });
                 }
 
@@ -236,21 +338,8 @@ class LabelPanel extends Container {
                 });
                 row.append(countLabel);
 
+                // delete button (not for unlabeled)
                 if (!isUnlabeled) {
-                    // assign button
-                    const assignBtn = new Label({
-                        class: 'label-action-btn',
-                        text: '\uE120'
-                    });
-                    assignBtn.dom.title = localize('panel.labels.assign');
-                    assignBtn.on('click', () => {
-                        events.fire('label.assign', id);
-                    });
-                    row.append(assignBtn);
-                }
-
-                if (!isUnlabeled) {
-                    // delete button
                     const deleteBtn = new Label({
                         class: ['label-action-btn', 'label-delete-btn'],
                         text: '\uE118'
@@ -258,6 +347,7 @@ class LabelPanel extends Container {
                     deleteBtn.dom.title = localize('panel.labels.delete-label');
                     deleteBtn.on('click', () => {
                         if (selected) {
+                            if (id === activeLabelId) activeLabelId = -1;
                             selected.removeLabel(id);
                         }
                     });
@@ -267,16 +357,50 @@ class LabelPanel extends Container {
                 listContainer.append(row);
             };
 
-            // unlabeled row (label 0)
+            // unlabeled row
             buildRow(0, localize('panel.labels.unlabeled'), null, true);
 
             // user labels
             selected.labels.forEach((label, id) => {
                 buildRow(id, label.name, label.color, false);
             });
+
+            updateToolbarState();
         };
 
-        // events
+        // toolbar actions
+
+        assignBtn.on('click', () => {
+            if (activeLabelId >= 0) {
+                events.fire('label.assign', activeLabelId);
+            }
+        });
+
+        replaceBtn.on('click', () => {
+            if (activeLabelId > 0) {
+                events.fire('label.replace', activeLabelId);
+            }
+        });
+
+        removeBtn.on('click', () => {
+            if (activeLabelId > 0) {
+                events.fire('label.removeSelected', activeLabelId);
+            }
+        });
+
+        selectBtn.on('click', () => {
+            if (activeLabelId >= 0) {
+                events.fire('label.select', activeLabelId, 'set');
+            }
+        });
+
+        deselectBtn.on('click', () => {
+            if (activeLabelId >= 0) {
+                events.fire('label.select', activeLabelId, 'remove');
+            }
+        });
+
+        // show labels toggle
 
         showLabelsToggle.on('change', (value: boolean) => {
             events.fire('view.setShowLabels', value);
@@ -286,16 +410,36 @@ class LabelPanel extends Container {
             showLabelsToggle.value = value;
         });
 
+        isolateToggle.on('change', (value: boolean) => {
+            events.fire('view.setIsolateSelected', value);
+        });
+
+        events.on('view.isolateSelected', (value: boolean) => {
+            isolateToggle.value = value;
+        });
+
+        // add all predefined light labels
+
+        addAllBtn.on('click', () => {
+            selected = events.invoke('selection') as Splat;
+            if (!selected) return;
+            for (const preset of prebuiltLabels) {
+                selected.createLabelWithId(preset.id, preset.name, preset.color);
+            }
+            rebuildList();
+        });
+
+        // add single custom label
+
         addBtn.on('click', () => {
-            // always try to get current selection
             selected = events.invoke('selection') as Splat;
             if (selected) {
-                selected.createLabel(localize('panel.labels.new-label'), nextColor());
+                selected.createLabel(localize('panel.labels.new-label'));
                 rebuildList();
-            } else {
-                console.warn('Label: no splat selected');
             }
         });
+
+        // rebuild on relevant events
 
         events.on('selection.changed', (splat: Splat) => {
             selected = splat;
@@ -331,7 +475,6 @@ class LabelPanel extends Container {
             setVisible(this.hidden);
         });
 
-        // when panel becomes visible, query current selection
         events.on('labelPanel.visible', (visible: boolean) => {
             if (visible) {
                 const current = events.invoke('selection') as Splat;
@@ -342,7 +485,10 @@ class LabelPanel extends Container {
             }
         });
 
-        tooltips.register(addBtn, localize('panel.labels.add-label'), 'bottom');
+        tooltips.register(assignBtn, 'Add selection to label', 'bottom');
+        tooltips.register(replaceBtn, 'Label = exactly selection', 'bottom');
+        tooltips.register(removeBtn, 'Unlabel selected points', 'bottom');
+        tooltips.register(addAllBtn, localize('panel.labels.add-all-lights'), 'bottom');
     }
 }
 
