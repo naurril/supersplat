@@ -6,6 +6,7 @@ import { SelectAllOp, SelectNoneOp, SelectInvertOp, SelectOp, HideSelectionOp, U
 import { Element, ElementType } from './element';
 import { Events } from './events';
 import { MappedReadFileSystem } from './io';
+import { downloadLightsYaml, importLightsYaml } from './io/write/lights-yaml';
 import { Scene } from './scene';
 import { Splat } from './splat';
 import { serializePly } from './splat-serialize';
@@ -766,6 +767,23 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         selectedSplats().forEach((splat) => {
             events.fire('edit.add', new RemoveFromLabelOp(splat, labelId));
         });
+    });
+
+    // export traffic light data as .lights.yaml
+    events.on('trafficLight.export', () => {
+        const splat = events.invoke('selection') as Splat;
+        if (splat?.trafficLights.size > 0) {
+            downloadLightsYaml(splat);
+        }
+    });
+
+    // import traffic light data from .lights.yaml
+    events.on('trafficLight.import', (yamlText: string) => {
+        const splat = events.invoke('selection') as Splat;
+        if (splat) {
+            importLightsYaml(splat, yamlText);
+            events.fire('splat.trafficLightsChanged', splat);
+        }
     });
 
     // select gaussians by label

@@ -23,6 +23,34 @@ import { State } from './splat-state';
 import { Transform } from './transform';
 import { TransformPalette } from './transform-palette';
 
+// traffic light types
+
+const BULB_NAMES = ['red_bulb', 'yellow_bulb', 'green_bulb'] as const;
+type BulbName = typeof BULB_NAMES[number];
+
+const BULB_COLORS: Record<BulbName, Color> = {
+    red_bulb: new Color(0.9, 0.1, 0.1),
+    yellow_bulb: new Color(1.0, 0.8, 0.0),
+    green_bulb: new Color(0.1, 0.9, 0.2)
+};
+
+interface TrafficLightBulbs {
+    red_bulb: number;
+    yellow_bulb: number;
+    green_bulb: number;
+}
+
+interface TrafficLightPhase {
+    lights: string[];
+    green: number;
+    yellow: number;
+}
+
+interface TrafficLightGroup {
+    name: string;
+    phases: TrafficLightPhase[];
+}
+
 const vec = new Vec3();
 const veca = new Vec3();
 const vecb = new Vec3();
@@ -74,6 +102,10 @@ class Splat extends Element {
     labels: Map<number, { name: string, color: Color }> = new Map();
     hiddenLabels: Set<number> = new Set();
     private _nextLabelId = 1;
+
+    trafficLights: Map<string, TrafficLightBulbs> = new Map();
+    trafficLightGroups: TrafficLightGroup[] = [];
+    private _nextTlLabelId = 512;
 
     measurePoints: Vec3[] = [];
     measureSelection = -1;
@@ -449,6 +481,78 @@ class Splat extends Element {
         return count;
     }
 
+    // traffic light methods
+
+    createTrafficLight(name: string): TrafficLightBulbs {
+        const bulbs: TrafficLightBulbs = {
+            red_bulb: this._nextTlLabelId++,
+            yellow_bulb: this._nextTlLabelId++,
+            green_bulb: this._nextTlLabelId++
+        };
+
+        for (const bulbName of BULB_NAMES) {
+            this.createLabelWithId(bulbs[bulbName], `${name}/${bulbName}`, BULB_COLORS[bulbName]);
+        }
+
+        this.trafficLights.set(name, bulbs);
+        this.scene.events.fire('splat.trafficLightsChanged', this);
+        return bulbs;
+    }
+
+    deleteTrafficLight(name: string) {
+        const tl = this.trafficLights.get(name);
+        if (!tl) return;
+
+        for (const bulbName of BULB_NAMES) {
+            this.removeLabel(tl[bulbName]);
+        }
+
+        this.trafficLights.delete(name);
+
+        // remove from any groups
+        for (const group of this.trafficLightGroups) {
+            for (const phase of group.phases) {
+                const idx = phase.lights.indexOf(name);
+                if (idx !== -1) phase.lights.splice(idx, 1);
+            }
+        }
+
+        this.scene.events.fire('splat.trafficLightsChanged', this);
+    }
+
+    renameTrafficLight(oldName: string, newName: string) {
+        const tl = this.trafficLights.get(oldName);
+        if (!tl || this.trafficLights.has(newName)) return;
+
+        // update label names
+        for (const bulbName of BULB_NAMES) {
+            this.renameLabel(tl[bulbName], `${newName}/${bulbName}`);
+        }
+
+        // update map
+        this.trafficLights.delete(oldName);
+        this.trafficLights.set(newName, tl);
+
+        // update group references
+        for (const group of this.trafficLightGroups) {
+            for (const phase of group.phases) {
+                const idx = phase.lights.indexOf(oldName);
+                if (idx !== -1) phase.lights[idx] = newName;
+            }
+        }
+
+        this.scene.events.fire('splat.trafficLightsChanged', this);
+    }
+
+    isTrafficLightLabel(labelId: number): boolean {
+        for (const tl of this.trafficLights.values()) {
+            if (tl.red_bulb === labelId || tl.yellow_bulb === labelId || tl.green_bulb === labelId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     get worldTransform() {
         return this.entity.getWorldTransform();
     }
@@ -767,7 +871,15 @@ class Splat extends Element {
                 name: label.name,
                 color: [label.color.r, label.color.g, label.color.b]
             })),
-            nextLabelId: this._nextLabelId
+            nextLabelId: this._nextLabelId,
+            trafficLights: Array.from(this.trafficLights.entries()).map(([name, bulbs]) => ({
+                name,
+                red_bulb: bulbs.red_bulb,
+                yellow_bulb: bulbs.yellow_bulb,
+                green_bulb: bulbs.green_bulb
+            })),
+            trafficLightGroups: this.trafficLightGroups,
+            nextTlLabelId: this._nextTlLabelId
         };
     }
 
@@ -793,7 +905,21 @@ class Splat extends Element {
             this._nextLabelId = doc.nextLabelId ?? (Math.max(0, ...this.labels.keys()) + 1);
             this.updateLabels();
         }
+
+        if (doc.trafficLights) {
+            this.trafficLights.clear();
+            for (const tl of doc.trafficLights) {
+                this.trafficLights.set(tl.name, {
+                    red_bulb: tl.red_bulb,
+                    yellow_bulb: tl.yellow_bulb,
+                    green_bulb: tl.green_bulb
+                });
+            }
+            this.trafficLightGroups = doc.trafficLightGroups ?? [];
+            this._nextTlLabelId = doc.nextTlLabelId ?? 512;
+        }
     }
 }
 
-export { Splat };
+export { Splat, BULB_NAMES, BULB_COLORS };
+export type { BulbName, TrafficLightBulbs, TrafficLightPhase, TrafficLightGroup };
